@@ -20,6 +20,7 @@
 
 declare(strict_types=1);
 
+
 namespace App\Security\Voter;
 
 use App\Entity\UserSystem\User;
@@ -55,7 +56,8 @@ final class UserVoter extends Voter
                 array_merge(
                     $this->resolver->listOperationsForPermission('users'),
                     $this->resolver->listOperationsForPermission('self'),
-                    ['info']
+                    // Keep supporting "edit" as a compatibility alias used by generic admin controllers
+                    ['info', 'edit']
                 ),
                 true
             );
@@ -66,7 +68,11 @@ final class UserVoter extends Voter
 
     public function supportsAttribute(string $attribute): bool
     {
-        return $this->helper->isValidOperation('users', $attribute) || $this->helper->isValidOperation('self', $attribute) || $attribute === 'info';
+        return $this->helper->isValidOperation('users', $attribute)
+            || $this->helper->isValidOperation('self', $attribute)
+            // "edit" is intentionally accepted as legacy alias for the generic save permission check
+            || $attribute === 'info'
+            || $attribute === 'edit';
     }
 
     public function supportsType(string $subjectType): bool
@@ -85,27 +91,49 @@ final class UserVoter extends Voter
         $user = $this->helper->resolveUser($token);
 
         if ($attribute === 'info') {
-            //Every logged-in user (non-anonymous) can see the info pages of other users
+            // Every logged-in user (non-anonymous) can see the info pages of other users
             if (!$user->isAnonymousUser()) {
                 return true;
             }
 
-            //For the anonymous user, use the user read permission
+            // For the anonymous user, use the user read permission
             $attribute = 'read';
         }
 
-        //Check if the checked user is the user itself
+        if ($attribute === 'edit') {
+            // Map legacy "edit" to the concrete user-edit operations that exist in the permission model
+            foreach (['edit_username', 'edit_infos', 'edit_permissions', 'set_password', 'change_user_settings'] as $mappedAttribute) {
+                // If the edited subject is the current user, allow self-* permissions to satisfy the alias too
+                if (
+                    ($subject instanceof User)
+                    && $subject->getID() === $user->getID()
+                    && $this->helper->isValidOperation('self', $mappedAttribute)
+                    && $this->helper->isGranted($token, 'self', $mappedAttribute, $vote)
+                ) {
+                    return true;
+                }
+
+                if ($this->helper->isValidOperation('users', $mappedAttribute)
+                    && $this->helper->isGranted($token, 'users', $mappedAttribute, $vote)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Check if the checked user is the user itself
         if (($subject instanceof User) && $subject->getID() === $user->getID() &&
             $this->helper->isValidOperation('self', $attribute)) {
-            //Then we also need to check the self permission
+            // Then we also need to check the self permission
             $tmp = $this->helper->isGranted($token, 'self', $attribute, $vote);
-            //But if the self value is not allowed then use just the user value:
+            // But if the self value is not allowed then use just the user value:
             if ($tmp) {
                 return $tmp;
             }
         }
 
-        //Else just check user permission:
+        // Else just check user permission:
         if ($this->helper->isValidOperation('users', $attribute)) {
             return $this->helper->isGranted($token, 'users', $attribute, $vote);
         }
