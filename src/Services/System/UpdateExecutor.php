@@ -449,7 +449,12 @@ class UpdateExecutor
                 microtime(true) - $stepStart
             );
 
-            // Step 7: Install PHP dependencies
+            // Step 7: Ensure clean working tree after checkout
+            $stepStart = microtime(true);
+            $this->ensureCleanWorkingTreeAfterCheckout();
+            $log('cleanup', 'Verified and cleaned working tree after checkout', true, microtime(true) - $stepStart);
+
+            // Step 8: Install PHP dependencies
             $stepStart = microtime(true);
             if ($this->debugMode) {
                 $this->runCommand([ // Install with dev dependencies in debug mode
@@ -470,7 +475,7 @@ class UpdateExecutor
             }
             $log('composer', 'Installed/updated PHP dependencies', true, microtime(true) - $stepStart);
 
-            // Step 8: Install frontend dependencies
+            // Step 9: Install frontend dependencies
             $stepStart = microtime(true);
             $this->runCommand([
                 'yarn', 'install',
@@ -479,14 +484,14 @@ class UpdateExecutor
             ], 'Install frontend dependencies', 600);
             $log('yarn_install', 'Installed frontend dependencies', true, microtime(true) - $stepStart);
 
-            // Step 9: Build frontend assets
+            // Step 10: Build frontend assets
             $stepStart = microtime(true);
             $this->runCommand([
                 'yarn', 'build',
             ], 'Build frontend assets', 600);
             $log('yarn_build', 'Built frontend assets', true, microtime(true) - $stepStart);
 
-            // Step 10: Run database migrations
+            // Step 11: Run database migrations
             $stepStart = microtime(true);
             $this->runCommand([
                 'php', 'bin/console', 'doctrine:migrations:migrate',
@@ -495,7 +500,7 @@ class UpdateExecutor
             ], 'Run migrations', 300);
             $log('migrations', 'Database migrations completed', true, microtime(true) - $stepStart);
 
-            // Step 11: Clear cache
+            // Step 12: Clear cache
             $stepStart = microtime(true);
             $this->runCommand([
                 'php', 'bin/console', 'cache:pool:clear', '--all',
@@ -504,7 +509,7 @@ class UpdateExecutor
             ], 'Clear cache', 120);
             $log('cache_clear', 'Cleared application cache', true, microtime(true) - $stepStart);
 
-            // Step 12: Warm up cache
+            // Step 13: Warm up cache
             $stepStart = microtime(true);
             $this->runCommand([
                 'php', 'bin/console', 'cache:warmup',
@@ -512,7 +517,7 @@ class UpdateExecutor
             ], 'Warmup cache', 120);
             $log('cache_warmup', 'Warmed up application cache', true, microtime(true) - $stepStart);
 
-            // Step 13: Reset OPcache (if available)
+            // Step 14: Reset OPcache (if available)
             $stepStart = microtime(true);
             $opcacheResult = $this->resetOpcache();
             $log('opcache_reset', $opcacheResult
@@ -520,12 +525,12 @@ class UpdateExecutor
                 : 'OPcache reset skipped (not available or not needed)',
                 true, microtime(true) - $stepStart);
 
-            // Step 14: Disable maintenance mode
+            // Step 15: Disable maintenance mode
             $stepStart = microtime(true);
             $this->disableMaintenanceMode();
             $log('maintenance_off', 'Disabled maintenance mode', true, microtime(true) - $stepStart);
 
-            // Step 15: Release lock
+            // Step 16: Release lock
             $stepStart = microtime(true);
             $this->releaseLock();
 
@@ -655,6 +660,36 @@ class UpdateExecutor
 
         $this->runCommand(['git', 'checkout', $targetVersion], 'Checkout version tag');
         return [$targetVersion, 'tag'];
+    }
+
+    /**
+     * Ensure the working tree is clean after checkout.
+     * Removes only non-ignored local changes and untracked files.
+     */
+    private function ensureCleanWorkingTreeAfterCheckout(): void
+    {
+        $status = trim($this->runCommand(
+            ['git', 'status', '--porcelain'],
+            'Check working tree status',
+            60
+        ));
+
+        if ($status === '') {
+            return;
+        }
+
+        $this->runCommand(['git', 'reset', '--hard', 'HEAD'], 'Discard tracked local changes', 120);
+        $this->runCommand(['git', 'clean', '-fd'], 'Remove untracked non-ignored files', 120);
+
+        $after = trim($this->runCommand(
+            ['git', 'status', '--porcelain'],
+            'Re-check working tree status',
+            60
+        ));
+
+        if ($after !== '') {
+            throw new \RuntimeException('Working tree is still dirty after cleanup. Please check repository permissions and Git state.');
+        }
     }
 
     /**
