@@ -38,7 +38,7 @@ use Version\Version;
  */
 class UpdateChecker
 {
-    private const GITHUB_API_BASE = 'https://api.github.com/repos/Part-DB/Part-DB-server';
+    private const GITHUB_API_BASE = 'https://api.github.com/repos/maikg1978/Part-DB-server';
     private const CACHE_KEY_RELEASES = 'update_checker_releases';
     private const CACHE_KEY_COMMITS = 'update_checker_commits_behind';
     private const CACHE_TTL = 60 * 60 * 6; // 6 hours
