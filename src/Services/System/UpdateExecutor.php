@@ -439,10 +439,15 @@ class UpdateExecutor
             $this->runCommand(['git', 'fetch', '--tags', '--force', 'origin'], 'Fetch from origin', 120);
             $log('fetch', 'Fetched latest changes and tags from origin', true, microtime(true) - $stepStart);
 
-            // Step 6: Checkout target version
+            // Step 6: Checkout target version (prefer matching branch over tag)
             $stepStart = microtime(true);
-            $this->runCommand(['git', 'checkout', $targetVersion], 'Checkout version');
-            $log('checkout', 'Checked out version: ' . $targetVersion, true, microtime(true) - $stepStart);
+            [$checkedOutRef, $checkedOutType] = $this->checkoutTargetVersionPreferBranch($targetVersion);
+            $log(
+                'checkout',
+                sprintf('Checked out %s: %s', $checkedOutType, $checkedOutRef),
+                true,
+                microtime(true) - $stepStart
+            );
 
             // Step 7: Install PHP dependencies
             $stepStart = microtime(true);
@@ -604,6 +609,52 @@ class UpdateExecutor
     private function runCommand(array $command, string $description, int $timeout = 120): string
     {
         return $this->commandRunHelper->runCommand($command, $description, $timeout);
+    }
+
+    /**
+     * Checkout target version with branch preference.
+     *
+     * Strategy:
+     * 1) Prefer a matching remote branch (e.g. v2.10.0 => 2.10.0)
+     * 2) Fallback to the tag (e.g. v2.10.0)
+     *
+     * @return array{0: string, 1: string} [checkedOutRef, refType]
+     */
+    private function checkoutTargetVersionPreferBranch(string $targetVersion): array
+    {
+        $branchName = ltrim($targetVersion, 'v');
+
+        $remoteBranchResult = trim($this->runCommand(
+            ['git', 'ls-remote', '--heads', 'origin', $branchName],
+            'Check if matching remote branch exists',
+            60
+        ));
+
+        if ($remoteBranchResult !== '') {
+            $localBranchExists = trim($this->runCommand(
+                ['git', 'branch', '--list', $branchName],
+                'Check if local branch exists',
+                60
+            )) !== '';
+
+            if ($localBranchExists) {
+                $this->runCommand(['git', 'checkout', $branchName], 'Checkout local branch');
+                $this->runCommand(
+                    ['git', 'merge', '--ff-only', 'origin/' . $branchName],
+                    'Fast-forward local branch'
+                );
+            } else {
+                $this->runCommand(
+                    ['git', 'checkout', '-b', $branchName, '--track', 'origin/' . $branchName],
+                    'Create and checkout tracking branch'
+                );
+            }
+
+            return [$branchName, 'branch'];
+        }
+
+        $this->runCommand(['git', 'checkout', $targetVersion], 'Checkout version tag');
+        return [$targetVersion, 'tag'];
     }
 
     /**
